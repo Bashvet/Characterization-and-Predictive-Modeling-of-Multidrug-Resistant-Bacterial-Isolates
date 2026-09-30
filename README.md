@@ -1,0 +1,2 @@
+# Characterization-and-Predictive-Modeling-of-Multidrug-Resistant-Bacterial-Isolates
+Machine learning analysis of antimicrobial resistance patterns in 1,358 archived bacterial isolates from Northern Nigeria (1990–2024), using Random Forest and K-means clustering to characterize multidrug resistance, identify key phenotypic resistance features, and uncover organism- and source-associated resistance profiles.
