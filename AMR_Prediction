@@ -1,0 +1,403 @@
+Appendix I: Python code
+Import pandas as pd
+Import numpy as np
+Import matplotlib.pyplot as plt
+Import seaborn as sns
+Import os
+
+From sklearn.cluster import KMeans
+From sklearn.decomposition import PCA
+From sklearn.preprocessing import StandardScaler
+From sklearn.metrics import silhouette_score
+Import warnings
+Warnings.filterwarnings(‘ignore’)
+
+# Set plotting style
+Sns.set_theme(style=”whitegrid”)
+Plt.rcParams[‘figure.figsize’] = [12, 6]
+
+# ==========================================
+# CREATE OUTPUT DIRECTORY
+# ==========================================
+Output_dir = “AMR_analysis_outputs”
+Os.makedirs(output_dir, exist_ok=True)
+Print(f”All outputs will be saved to: ‘{output_dir}/’\n”)
+
+# ==========================================
+# 0. DATA LOADING & PREPROCESSING
+# ==========================================
+Print(“--- Loading and Cleaning Data ---“)
+Df = pd.read_csv(‘MLAMR.csv’)
+
+# Strip trailing/leading spaces from column names
+Df.columns = df.columns.str.strip()
+
+# Clean Target Class (MDR)
+Df = df.dropna(subset=[‘MDR’])
+Df[‘MDR_binary’] = df[‘MDR’].map({‘YES’: 1, ‘NO’: 0})
+
+# Standardize Sample Types
+Df[‘Sample_Type_Clean’] = df[‘Sample_Type’].astype(str).str.strip().str.lower()
+Df[‘Sample_Type_Clean’] = df[‘Sample_Type_Clean’].replace({
+    ‘cloacal swap’: ‘cloacal swab’,
+    ‘cloacal swabs’: ‘cloacal swab’,
+    ‘milk sample’: ‘milk’,
+    ‘ milk sample’: ‘milk’,
+    ‘raw and fermented cow milk        ‘: ‘raw and fermented cow milk’
+})
+
+# Create Isolate_ID if not exists
+If ‘Isolate_ID’ not in df.columns:
+    Df[‘Isolate_ID’] = [f’Isolate_{i}’ for I in range(len(df))]
+
+# Identify antibiotic columns
+Metadata_cols = [‘Sample_Type’, ‘Location’, ‘Longtitude’, ‘Latitude’, ‘Date’,
+                  ‘Org_Isolated’, ‘MAR_index’, ‘MDR’, ‘Isolate_ID’, ‘MDR_binary’,
+                  ‘Sample_Type_Clean’, ‘S.No’, ‘Unnamed: 0’]
+Antibiotic_cols = [col for col in df.columns if col not in metadata_cols]
+# Fill missing with 0 (susceptible)
+Df[antibiotic_cols] = df[antibiotic_cols].fillna(0)
+
+Print(f”Dataset cleanly loaded. Shape: {df.shape}”)
+Print(f”Number of antibiotic features: {len(antibiotic_cols)}\n”)
+
+
+# ==========================================
+# OBJECTIVE I: Antibiotic Class Mapping & Distribution
+# ==========================================
+Print(“\n” + “=”*70)
+Print(“OBJECTIVE I: Antibiotic Class Profiling & Distribution”)
+Print(“=”*70)
+
+# Comprehensive mapping based on mechanism of action
+Antibiotic_classes = {
+    “Penicillins”: [“AM”, “AMC”, “P”, “OX”, “AU”, “MET”, “CL”, “TIM”, “CB”, “AMOX”, “MEX”, “FLUC”, “AMP”, “AMO”, “PRL”],
+    “Cephalosporins”: [“CRO”, “KF”, “FOX”, “CAZ”, “CFM”, “CEPTA”, “CEFTOB”, “CXM”, “CTX”, “KZ”, “CTN”, “CEFA”, “CEF”, “ZIN”, “RC”, “FEP”],
+    “Carbapenems_Monobactams”: [“IMP”, “ETP”, “MRM”, “ATM”],
+    “Quinolones”: [“CIP”, “ENR”, “NA”, “PEF”, “NORFLO”, “MOXIL”, “OFX”, “LE”, “SP”, “NO”, “TD”, “OFZ”],
+    “Aminoglycosides”: [“CN”, “AK”, “S”, “N”, “K”, “TOB”, “NET”, “SPEC”],
+    “Tetracyclines”: [“TET”, “DO”, “TGC”, “O”, “DOX”],
+    “Macrolides”: [“E”, “AZM”],
+    “Folate_Inhibitors”: [“SXT”, “SX”, “RL”, “S3”, “SUL”, “COT”, “STN”],
+    “Glycopeptides_Lipopeptides”: [“VA”, “TEC”, “DAP”],
+    “Lincosamides”: [“DA”, “MY”, “CLI”],
+    “Oxazolidinones”: [“LINEZOLIDLINEZOLID”, “LZD”],
+    “Polymyxins”: [“CT”],
+    “Phenicols”: [“C”],
+    “Nitro_Compounds”: [“F”, “METRO”],
+    “Miscellaneous”: [“B”, “MUPIROCIN”, “RIFAMP”, “QUINUPRISTIN”, “FUSIDIC”, “FOS”]
+}
+
+# Filter to only include classes that have at least one matching column
+Available_classes = {}
+For class_name, drugs in antibiotic_classes.items():
+    Valid_drugs = [drug for drug in drugs if drug in df.columns]
+    If valid_drugs:
+        Available_classes[class_name] = valid_drugs
+        Print(f”  {class_name}: {len(valid_drugs)} antibiotics found”)
+    Else:
+        Print(f”  {class_name}: SKIPPED (no matching antibiotics in dataset)”)
+
+# Aggregate resistance by class
+Class_resistance_profiles = pd.DataFrame(index=df.index)
+
+For class_name, valid_drugs in available_classes.items():
+    Class_resistance_profiles[class_name] = df[valid_drugs].mean(axis=1)
+
+# Check if we have any class profiles
+If len(class_resistance_profiles.columns) == 0:
+    Print(“\nERROR: No antibiotic classes found! Please check antibiotic column names.”)
+    Exit(1)
+
+# Calculate overall class resistance rates
+Mean_class_resistance = class_resistance_profiles.mean().sort_values(ascending=False)
+
+# Plot class distribution
+Plt.figure(figsize=(12, 8))
+Colors = sns.color_palette(“viridis”, len(mean_class_resistance))
+Bars = plt.barh(range(len(mean_class_resistance)), mean_class_resistance.values, color=colors)
+Plt.yticks(range(len(mean_class_resistance)), mean_class_resistance.index)
+Plt.title(“Distribution of Antibiotic Resistance by Chemical Structure / Class”, fontsize=14)
+Plt.xlabel(“Mean Resistance Index (0 = Susceptible, 1 = Resistant)”, fontsize=12)
+Plt.gca().invert_yaxis()
+Plt.tight_layout()
+Plt.savefig(f’{output_dir}/01_antibiotic_class_distribution.png’, dpi=100, bbox_inches=’tight’)
+Plt.show()
+
+# Save class resistance data
+Class_resistance_summary = pd.DataFrame({
+    ‘Antibiotic_Class’: mean_class_resistance.index,
+    ‘Mean_Resistance_Rate’: mean_class_resistance.values,
+    ‘Number_of_Antibiotics’: [len(available_classes[c]) for c in mean_class_resistance.index]
+})
+Class_resistance_summary.to_csv(f’{output_dir}/01_class_resistance_summary.csv’, index=False)
+Print(f”\n✓ Class distribution plot saved to: {output_dir}/01_antibiotic_class_distribution.png”)
+Print(f”✓ Class resistance summary saved to: {output_dir}/01_class_resistance_summary.csv”)
+
+# Create a bar plot of top 10 most resistant classes
+Plt.figure(figsize=(10, 6))
+Top10_classes = mean_class_resistance.head(10)
+Sns.barplot(x=top10_classes.values, y=top10_classes.index, palette=”rocket”)
+Plt.title(“Top 10 Most Resistant Antibiotic Classes”, fontsize=14)
+Plt.xlabel(“Mean Resistance Index”, fontsize=12)
+Plt.tight_layout()
+Plt.savefig(f’{output_dir}/01_top10_resistant_classes.png’, dpi=100, bbox_inches=’tight’)
+Plt.show()
+Print(f”✓ Top 10 resistant classes plot saved to: {output_dir}/01_top10_resistant_classes.png\n”)
+
+
+# ==========================================
+# OBJECTIVE II: REMOVED (as requested)
+# ==========================================
+Print(“\n” + “=”*70)
+Print(“OBJECTIVE II: REMOVED (Relationship analysis excluded as requested)”)
+Print(“=”*70)
+
+# OBJECTIVE IV: Unsupervised Antibiogram Phenotypic Clustering
+# ==========================================
+Print(“\n” + “=”*70)
+Print(“OBJECTIVE IV: Unsupervised Antibiogram Phenotypic Clustering”)
+Print(“=”*70)
+
+# Subset antibiotic data matrix
+X_clustering = df[antibiotic_cols].copy()
+
+# Determine optimal number of clusters using elbow method and silhouette score
+Inertias = []
+Silhouette_scores = []
+K_range = range(2, 11)
+
+Print(“\nCalculating optimal number of clusters…”)
+For k in k_range:
+    Kmeans_temp = KMeans(n_clusters=k, random_state=42, n_init=10)
+    Labels_temp = kmeans_temp.fit_predict(X_clustering)
+    Inertias.append(kmeans_temp.inertia_)
+    Sil_score = silhouette_score(X_clustering, labels_temp)
+    Silhouette_scores.append(sil_score)
+    Print(f”  k={k}: Silhouette Score = {sil_score:.3f}”)
+
+# Plot elbow curve
+Fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+Axes[0].plot(k_range, inertias, ‘bo-‘, linewidth=2, markersize=8)
+Axes[0].set_xlabel(‘Number of Clusters (k)’)
+Axes[0].set_ylabel(‘Inertia’)
+Axes[0].set_title(‘Elbow Method for Optimal k’)
+Axes[0].grid(True, alpha=0.3)
+
+Axes[1].plot(k_range, silhouette_scores, ‘ro-‘, linewidth=2, markersize=8)
+Axes[1].set_xlabel(‘Number of Clusters (k)’)
+Axes[1].set_ylabel(‘Silhouette Score’)
+Axes[1].set_title(‘Silhouette Score (higher = better)’)
+Axes[1].axhline(y=max(silhouette_scores), color=’green’, linestyle=’—‘, alpha=0.7)
+Axes[1].grid(True, alpha=0.3)
+
+Plt.tight_layout()
+Plt.savefig(f’{output_dir}/04_clustering_metrics.png’, dpi=100, bbox_inches=’tight’)
+Plt.show()
+
+# Choose optimal k (using silhouette score)
+Optimal_k = k_range[np.argmax(silhouette_scores)]
+Print(f”\n✓ Optimal number of clusters (by silhouette score): {optimal_k}”)
+
+# Apply K-Means with optimal k
+Kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
+Df[‘Antibiogram_Cluster’] = kmeans.fit_predict(X_clustering)
+
+# ==========================================
+# Cluster Characteristics Table (Formatted)
+# ==========================================
+Print(“\n” + “=”*70)
+Print(“TABLE 1: Antibiogram Phenotypic Cluster Characteristics”)
+Print(“=”*70)
+
+# Calculate comprehensive cluster profiles
+Cluster_summary_list = []
+Available_class_names = list(class_resistance_profiles.columns)
+
+For cluster_id in range(optimal_k):
+    Cluster_data = df[df[‘Antibiogram_Cluster’] == cluster_id]
+   
+    # Get dominant organism and sample type
+    Dominant_org = cluster_data[‘Org_Isolated’].mode()
+    Dominant_org = dominant_org.iloc[0] if len(dominant_org) > 0 else ‘Mixed’
+   
+    Dominant_sample = cluster_data[‘Sample_Type_Clean’].mode()
+    Dominant_sample = dominant_sample.iloc[0] if len(dominant_sample) > 0 else ‘Mixed’
+   
+    # Calculate resistance burden score
+    If len(available_class_names) > 0:
+        Resistance_burden = cluster_data[available_class_names].mean().mean()
+    Else:
+        Resistance_burden = 0
+   
+    Cluster_summary_list.append({
+        ‘Cluster_ID’: cluster_id,
+        ‘Sample_Count’: len(cluster_data),
+        ‘MDR_Prevalence (%)’: round(cluster_data[‘MDR_binary’].mean() * 100, 1),
+        ‘Avg_MAR_Index’: round(cluster_data[‘MAR_index’].mean(), 3),
+        ‘Dominant_Organism’: dominant_org,
+        ‘Dominant_Sample_Type’: dominant_sample,
+        ‘Resistance_Burden_Score’: round(resistance_burden, 3),
+        ‘High_Risk_Cluster’: ‘Yes’ if cluster_data[‘MDR_binary’].mean() > 0.5 else ‘No’
+    })
+
+Cluster_profiles = pd.DataFrame(cluster_summary_list)
+
+# Print formatted table
+Print(“\n” + “-“*100)
+Print(f”{‘Cluster’:<10} {‘Count’:<8} {‘MDR%’:<10} {‘MAR Index’:<12} {‘Dominant Organism’:<30} {‘Dominant Sample’:<22} {‘Risk’:<8}”)
+Print(“-“*100)
+
+For _, row in cluster_profiles.iterrows():
+    Org_display = str(row[‘Dominant_Organism’])[:29]
+    Sample_display = str(row[‘Dominant_Sample_Type’])[:21]
+    Print(f”{row[‘Cluster_ID’]:<10} {row[‘Sample_Count’]:<8} {row[‘MDR_Prevalence (%)’]:<10.1f} {row[‘Avg_MAR_Index’]:<12.3f} {org_display:<30} {sample_display:<22} {row[‘High_Risk_Cluster’]:<8}”)
+
+Print(“-“*100)
+
+# Save cluster profiles to CSV
+Cluster_profiles.to_csv(f’{output_dir}/04_cluster_characteristics.csv’, index=False)
+Print(f”\n✓ Cluster characteristics saved to: {output_dir}/04_cluster_characteristics.csv”)
+
+# ==========================================
+# Detailed Resistance Profile by Antibiotic Class
+# ==========================================
+If len(available_class_names) > 0:
+    Print(“\n” + “=”*70)
+    Print(“TABLE 2: Antibiotic Class Resistance Profile by Cluster”)
+    Print(“=”*70)
+   
+    # Create matrix of class resistance by cluster
+    Cluster_class_matrix = df.groupby(‘Antibiogram_Cluster’)[available_class_names].mean().round(3)
+   
+    # Print formatted table
+    Print(“\n” + “-“*80)
+    Header = f”{‘Cluster’:<10}” + “”.join([f”{cls[:12]:<12}” for cls in available_class_names])
+    Print(header)
+    Print(“-“*80)
+   
+    For cluster_id in range(optimal_k):
+        Row = cluster_class_matrix.loc[cluster_id]
+        Row_str = f”{cluster_id:<10}” + “”.join([f”{val:<12.3f}” for val in row.values])
+        Print(row_str)
+   
+    Print(“-“*80)
+   
+    # Save to CSV
+    Cluster_class_matrix.to_csv(f’{output_dir}/04_cluster_class_resistance_matrix.csv’)
+    Print(f”\n✓ Class resistance by cluster saved to: {output_dir}/04_cluster_class_resistance_matrix.csv”)
+   
+    # Create heatmap visualization
+    Plt.figure(figsize=(14, max(6, optimal_k * 0.6)))
+    Sns.heatmap(cluster_class_matrix, annot=True, fmt=’.2f’, cmap=’RdYlGn_r’,
+                Cbar_kws={‘label’: ‘Resistance Rate’}, linewidths=0.5)
+    Plt.title(f”Antibiotic Class Resistance Profile by Antibiogram Cluster (k={optimal_k})”, fontsize=14)
+    Plt.xlabel(“Antibiotic Class”, fontsize=12)
+    Plt.ylabel(“Cluster ID”, fontsize=12)
+    Plt.xticks(rotation=45, ha=’right’)
+    Plt.tight_layout()
+    Plt.savefig(f’{output_dir}/04_cluster_class_heatmap.png’, dpi=100, bbox_inches=’tight’)
+    Plt.show()
+    Print(f”✓ Cluster class heatmap saved to: {output_dir}/04_cluster_class_heatmap.png”)
+
+# ==========================================
+# Visualize clusters with PCA
+# ==========================================
+Print(“\n--- Visualizing Antibiogram Clusters with PCA ---“)
+
+# Standardize before PCA
+Scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X_clustering)
+
+Pca = PCA(n_components=2, random_state=42)
+Pca_components = pca.fit_transform(X_scaled)
+Df[‘PCA1’] = pca_components[:, 0]
+Df[‘PCA2’] = pca_components[:, 1]
+
+# Calculate variance explained
+Var_explained1 = pca.explained_variance_ratio_[0] * 100
+Var_explained2 = pca.explained_variance_ratio_[1] * 100
+
+Plt.figure(figsize=(12, 8))
+Scatter = plt.scatter(df[‘PCA1’], df[‘PCA2’], c=df[‘Antibiogram_Cluster’],
+                      Cmap=’tab10’, alpha=0.6, s=50)
+Plt.colorbar(scatter, label=’Cluster ID’)
+Plt.xlabel(f”Principal Component 1 ({var_explained1:.1f}% variance)”, fontsize=12)
+Plt.ylabel(f”Principal Component 2 ({var_explained2:.1f}% variance)”, fontsize=12)
+Plt.title(f”Phenotypic Antibiogram Clusters Visualized via PCA Space (k={optimal_k})”, fontsize=14)
+Plt.tight_layout()
+Plt.savefig(f’{output_dir}/04_cluster_pca_visualization.png’, dpi=100, bbox_inches=’tight’)
+Plt.show()
+Print(f”✓ PCA visualization saved to: {output_dir}/04_cluster_pca_visualization.png”)
+
+# ==========================================
+# Cluster distribution pie chart
+# ==========================================
+Plt.figure(figsize=(8, 8))
+Cluster_counts = df[‘Antibiogram_Cluster’].value_counts().sort_index()
+Plt.pie(cluster_counts.values, labels=[f”Cluster {i}\n(n={cluster_counts[i]})” for I in cluster_counts.index],
+        Autopct=’%1.1f%%’, startangle=90, colors=sns.color_palette(“Set2”, optimal_k))
+Plt.title(f”Distribution of Isolates Across {optimal_k} Antibiogram Clusters”, fontsize=14)
+Plt.tight_layout()
+Plt.savefig(f’{output_dir}/04_cluster_distribution_pie.png’, dpi=100, bbox_inches=’tight’)
+Plt.show()
+Print(f”✓ Cluster distribution pie chart saved to: {output_dir}/04_cluster_distribution_pie.png”)
+
+# ==========================================
+# Save all cluster outputs
+# ==========================================
+# Save cluster assignments for each isolate
+Cluster_assignments = df[[‘Isolate_ID’, ‘Antibiogram_Cluster’, ‘MDR_binary’, ‘MAR_index’,
+                          ‘Org_Isolated’, ‘Sample_Type_Clean’]]
+Cluster_assignments.to_csv(f’{output_dir}/04_cluster_assignments.csv’, index=False)
+
+Print(f”\n✓ Cluster assignments saved to: {output_dir}/04_cluster_assignments.csv”)
+Print(f”✓ Detailed cluster profiles saved to: {output_dir}/04_cluster_characteristics.csv”)
+Print(f”✓ Clustering metrics saved to: {output_dir}/04_clustering_metrics.png”)
+
+
+# ==========================================
+# FINAL SUMMARY
+# ==========================================
+Print(“\n” + “=”*70)
+Print(“FINAL SUMMARY – ALL OUTPUTS GENERATED”)
+Print(“=”*70)
+
+Print(f”\nOutput Directory: ‘{output_dir}/’”)
+
+Print(“\n” + “-“*50)
+Print(“OBJECTIVE I – Antibiotic Class Distribution:”)
+Print(“-“*50)
+Print(f”  • {output_dir}/01_antibiotic_class_distribution.png”)
+Print(f”  • {output_dir}/01_top10_resistant_classes.png”)
+Print(f”  • {output_dir}/01_class_resistance_summary.csv”)
+
+Print(“\n” + “-“*50)
+Print(“OBJECTIVE IV – Antibiogram Phenotypic Clustering:”)
+Print(“-“*50)
+Print(f”  • {output_dir}/04_clustering_metrics.png”)
+Print(f”  • {output_dir}/04_cluster_pca_visualization.png”)
+Print(f”  • {output_dir}/04_cluster_distribution_pie.png”)
+If len(available_class_names) > 0:
+    Print(f”  • {output_dir}/04_cluster_class_heatmap.png”)
+    Print(f”  • {output_dir}/04_cluster_class_resistance_matrix.csv”)
+Print(f”  • {output_dir}/04_cluster_assignments.csv”)
+Print(f”  • {output_dir}/04_cluster_characteristics.csv”)
+
+Print(“\n” + “=”*70)
+Print(“ANALYSIS COMPLETE”)
+Print(“=”*70)
+
+# Display cluster summary
+Print(“\n” + “=”*70)
+Print(“QUICK SUMMARY OF DISCOVERED CLUSTERS”)
+Print(“=”*70)
+For _, row in cluster_profiles.iterrows():
+    Risk_symbol = “🔴 HIGH RISK” if row[‘High_Risk_Cluster’] == ‘Yes’ else “🟢 LOW RISK”
+    Print(f”\nCluster {int(row[‘Cluster_ID’])}: {risk_symbol}”)
+    Print(f”  • {row[‘Sample_Count’]} isolates ({row[‘MDR_Prevalence (%)’]:.1f}% MDR)”)
+    Print(f”  • Dominant Organism: {row[‘Dominant_Organism’]}”)
+    Print(f”  • Dominant Sample Type: {row[‘Dominant_Sample_Type’]}”)
+    Print(f”  • Average MAR Index: {row[‘Avg_MAR_Index’]:.3f}”)
+    Print(f”  • Resistance Burden Score: {row[‘Resistance_Burden_Score’]:.3f}”)
